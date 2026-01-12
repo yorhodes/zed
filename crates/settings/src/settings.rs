@@ -26,7 +26,9 @@ use util::asset_str;
 
 pub use base_keymap_setting::*;
 pub use editable_setting_control::*;
-pub use editorconfig_store::{Editorconfig, EditorconfigProperties, EditorconfigStore};
+pub use editorconfig_store::{
+    Editorconfig, EditorconfigEvent, EditorconfigProperties, EditorconfigStore,
+};
 pub use keymap_file::{
     KeyBindingValidator, KeyBindingValidatorRegistration, KeybindSource, KeybindUpdateOperation,
     KeybindUpdateTarget, KeymapFile, KeymapFileLoadResult,
@@ -35,9 +37,9 @@ pub use serde_helper::*;
 pub use settings_file::*;
 pub use settings_json::*;
 pub use settings_store::{
-    InvalidSettingsError, LSP_SETTINGS_SCHEMA_URL_PREFIX, LocalSettingsKind, MigrationStatus,
-    ParseStatus, Settings, SettingsFile, SettingsJsonSchemaParams, SettingsKey, SettingsLocation,
-    SettingsParseResult, SettingsStore,
+    InvalidSettingsError, LSP_SETTINGS_SCHEMA_URL_PREFIX, LocalSettingsKind, LocalSettingsPath,
+    MigrationStatus, ParseStatus, Settings, SettingsFile, SettingsJsonSchemaParams, SettingsKey,
+    SettingsLocation, SettingsParseResult, SettingsStore,
 };
 
 pub use vscode_import::{VsCodeSettings, VsCodeSettingsSource};
@@ -94,9 +96,12 @@ pub fn init(cx: &mut App) {
     let editorconfig_store = settings.editorconfig_store.clone();
     cx.set_global(settings);
 
-    cx.subscribe(&editorconfig_store, |_store, _event: &(), cx| {
-        cx.update_global::<SettingsStore, _>(|_store, _cx| {});
-    })
+    cx.subscribe(
+        &editorconfig_store,
+        |_store, _event: &EditorconfigEvent, cx| {
+            cx.update_global::<SettingsStore, _>(|_store, _cx| {});
+        },
+    )
     .detach();
 
     SettingsStore::observe_active_settings_profile_name(cx).detach();

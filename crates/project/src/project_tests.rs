@@ -285,9 +285,12 @@ async fn test_external_editorconfig_support(cx: &mut gpui::TestAppContext) {
                 .read(cx)
                 .languages()
                 .load_language_for_file_path(file.path.as_std_path());
-            let file_language = cx.background_executor().block(file_language).ok();
+            let file_language = cx
+                .foreground_executor()
+                .block_on(file_language)
+                .expect("Failed to get file language");
             let file = file as _;
-            language_settings(file_language.map(|l| l.name()), Some(&file), cx).into_owned()
+            language_settings(Some(file_language.name()), Some(&file), cx).into_owned()
         };
 
         let settings_rs = settings_for("main.rs");
@@ -339,10 +342,12 @@ async fn test_external_editorconfig_root_stops_traversal(cx: &mut gpui::TestAppC
             .read(cx)
             .languages()
             .load_language_for_file_path(file.path.as_std_path());
-        let file_language = cx.background_executor().block(file_language).ok();
+        let file_language = cx
+            .foreground_executor()
+            .block_on(file_language)
+            .expect("Failed to get file language");
         let file = file as _;
-        let settings =
-            language_settings(file_language.map(|l| l.name()), Some(&file), cx).into_owned();
+        let settings = language_settings(Some(file_language.name()), Some(&file), cx).into_owned();
 
         // file.rs gets indent_size = 2 from worktree's root config, NOT 99 from parent
         assert_eq!(Some(settings.tab_size), NonZeroU32::new(2));
@@ -385,10 +390,12 @@ async fn test_external_editorconfig_root_in_parent_stops_traversal(cx: &mut gpui
             .read(cx)
             .languages()
             .load_language_for_file_path(file.path.as_std_path());
-        let file_language = cx.background_executor().block(file_language).ok();
+        let file_language = cx
+            .foreground_executor()
+            .block_on(file_language)
+            .expect("Failed to get file language");
         let file = file as _;
-        let settings =
-            language_settings(file_language.map(|l| l.name()), Some(&file), cx).into_owned();
+        let settings = language_settings(Some(file_language.name()), Some(&file), cx).into_owned();
 
         // file.rs gets indent_size = 4 from parent's root config, NOT 99 from grandparent
         assert_eq!(Some(settings.tab_size), NonZeroU32::new(4));
@@ -443,10 +450,13 @@ async fn test_external_editorconfig_shared_across_worktrees(cx: &mut gpui::TestA
                 .read(cx)
                 .languages()
                 .load_language_for_file_path(file.path.as_std_path());
-            let file_language = cx.background_executor().block(file_language).ok();
+            let file_language = cx
+                .foreground_executor()
+                .block_on(file_language)
+                .expect("Failed to get file language");
             let file = file as _;
             let settings =
-                language_settings(file_language.map(|l| l.name()), Some(&file), cx).into_owned();
+                language_settings(Some(file_language.name()), Some(&file), cx).into_owned();
 
             // Both worktrees should get indent_size = 5 from shared parent .editorconfig
             assert_eq!(Some(settings.tab_size), NonZeroU32::new(5));
@@ -489,10 +499,12 @@ async fn test_external_editorconfig_not_loaded_without_internal_config(
             .read(cx)
             .languages()
             .load_language_for_file_path(file.path.as_std_path());
-        let file_language = cx.background_executor().block(file_language).ok();
+        let file_language = cx
+            .foreground_executor()
+            .block_on(file_language)
+            .expect("Failed to get file language");
         let file = file as _;
-        let settings =
-            language_settings(file_language.map(|l| l.name()), Some(&file), cx).into_owned();
+        let settings = language_settings(Some(file_language.name()), Some(&file), cx).into_owned();
 
         // file.rs should have default tab_size = 4, NOT 99 from parent's external .editorconfig
         // because without an internal .editorconfig, external configs are not loaded

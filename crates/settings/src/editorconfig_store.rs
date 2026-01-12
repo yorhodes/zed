@@ -6,10 +6,14 @@ use futures::StreamExt;
 use gpui::{AsyncApp, Context, EventEmitter, Task, WeakEntity};
 use paths::EDITORCONFIG_NAME;
 use smallvec::SmallVec;
-use std::{path::Path, str::FromStr, sync::Arc};
+use std::{
+    path::{Path, PathBuf},
+    str::FromStr,
+    sync::Arc,
+};
 use util::{ResultExt as _, rel_path::RelPath};
 
-use crate::{InvalidSettingsError, WorktreeId, watch_config_file};
+use crate::{InvalidSettingsError, LocalSettingsPath, WorktreeId, watch_config_file};
 
 pub type EditorconfigProperties = ec4rs::Properties;
 
@@ -33,72 +37,193 @@ impl FromStr for Editorconfig {
     }
 }
 
+#[derive(Clone, Default)]
+struct EditorconfigData {
+    content: String,
+    parsed: Option<Editorconfig>,
+}
+
+struct ExternalEditorconfigData {
+    config: EditorconfigData,
+    _watch_task: Option<Task<()>>,
+}
+
+#[derive(Clone, Debug)]
+pub enum EditorconfigEvent {
+    InternalConfigChanged {
+        worktree_id: WorktreeId,
+        path: Arc<RelPath>,
+    },
+    ExternalConfigChanged {
+        worktree_id: WorktreeId,
+        abs_path: Arc<Path>,
+    },
+}
+
 #[derive(Default)]
 pub struct EditorconfigStore {
     /// External editorconfig files shared across multiple worktrees
-    external_configs: BTreeMap<Arc<Path>, (Option<Editorconfig>, Task<()>)>,
+    external_configs: BTreeMap<Arc<Path>, ExternalEditorconfigData>,
     worktree_editorconfig_state: BTreeMap<WorktreeId, WorktreeEditorconfigState>,
 }
 
-impl EventEmitter<()> for EditorconfigStore {}
+impl EventEmitter<EditorconfigEvent> for EditorconfigStore {}
 
 #[derive(Default)]
 pub struct WorktreeEditorconfigState {
-    internal_configs: BTreeMap<Arc<RelPath>, (String, Option<Editorconfig>)>,
+    internal_configs: BTreeMap<Arc<RelPath>, EditorconfigData>,
     external_config_paths: Option<BTreeSet<Arc<Path>>>,
     external_configs_loading_task: Option<Task<()>>,
 }
 
 impl EditorconfigStore {
-    pub(crate) fn set_local_internal_configs(
+    pub(crate) fn set_config(
         &mut self,
-        root_id: WorktreeId,
-        directory_path: Arc<RelPath>,
-        editorconfig_contents: Option<&str>,
+        worktree_id: WorktreeId,
+        path: LocalSettingsPath,
+        content: Option<&str>,
+        cx: &mut Context<Self>,
     ) -> std::result::Result<(), InvalidSettingsError> {
-        match editorconfig_contents {
-            None => {
-                if let Some(state) = self.worktree_editorconfig_state.get_mut(&root_id) {
-                    state.internal_configs.remove(&directory_path);
+        match (&path, content) {
+            (LocalSettingsPath::InWorktree(rel_path), None) => {
+                if let Some(state) = self.worktree_editorconfig_state.get_mut(&worktree_id) {
+                    state.internal_configs.remove(rel_path);
                 }
             }
-            Some(editorconfig_contents) => {
-                let state = self.worktree_editorconfig_state.entry(root_id).or_default();
-                match state.internal_configs.entry(directory_path.clone()) {
-                    btree_map::Entry::Vacant(v) => match editorconfig_contents.parse() {
-                        Ok(new_contents) => {
-                            v.insert((editorconfig_contents.to_owned(), Some(new_contents)));
+            (LocalSettingsPath::OutsideWorktree(abs_path), None) => {
+                self.external_configs.remove(abs_path);
+                if let Some(state) = self.worktree_editorconfig_state.get_mut(&worktree_id) {
+                    if let Some(paths) = &mut state.external_config_paths {
+                        paths.remove(abs_path);
+                    }
+                }
+                // do something about this
+                cx.emit(EditorconfigEvent::ExternalConfigChanged {
+                    worktree_id,
+                    abs_path: abs_path.clone(),
+                });
+            }
+            (LocalSettingsPath::InWorktree(rel_path), Some(content)) => {
+                let state = self
+                    .worktree_editorconfig_state
+                    .entry(worktree_id)
+                    .or_default();
+                match state.internal_configs.entry(rel_path.clone()) {
+                    btree_map::Entry::Vacant(v) => match content.parse() {
+                        Ok(parsed) => {
+                            v.insert(EditorconfigData {
+                                content: content.to_owned(),
+                                parsed: Some(parsed),
+                            });
                         }
                         Err(e) => {
-                            v.insert((editorconfig_contents.to_owned(), None));
+                            v.insert(EditorconfigData {
+                                content: content.to_owned(),
+                                parsed: None,
+                            });
                             return Err(InvalidSettingsError::Editorconfig {
                                 message: e.to_string(),
-                                path: directory_path
-                                    .join(RelPath::unix(EDITORCONFIG_NAME).unwrap()),
+                                path: LocalSettingsPath::InWorktree(
+                                    rel_path.join(RelPath::unix(EDITORCONFIG_NAME).unwrap()),
+                                ),
                             });
                         }
                     },
                     btree_map::Entry::Occupied(mut o) => {
-                        if o.get().0 != editorconfig_contents {
-                            match editorconfig_contents.parse() {
-                                Ok(new_contents) => {
-                                    o.insert((
-                                        editorconfig_contents.to_owned(),
-                                        Some(new_contents),
-                                    ));
+                        if o.get().content != content {
+                            match content.parse() {
+                                Ok(parsed) => {
+                                    o.insert(EditorconfigData {
+                                        content: content.to_owned(),
+                                        parsed: Some(parsed),
+                                    });
                                 }
                                 Err(e) => {
-                                    o.insert((editorconfig_contents.to_owned(), None));
+                                    o.insert(EditorconfigData {
+                                        content: content.to_owned(),
+                                        parsed: None,
+                                    });
                                     return Err(InvalidSettingsError::Editorconfig {
                                         message: e.to_string(),
-                                        path: directory_path
-                                            .join(RelPath::unix(EDITORCONFIG_NAME).unwrap()),
+                                        path: LocalSettingsPath::InWorktree(
+                                            rel_path
+                                                .join(RelPath::unix(EDITORCONFIG_NAME).unwrap()),
+                                        ),
                                     });
                                 }
                             }
                         }
                     }
                 }
+            }
+            (LocalSettingsPath::OutsideWorktree(abs_path), Some(content)) => {
+                let should_update = self
+                    .external_configs
+                    .get(abs_path)
+                    .map_or(true, |entry| entry.config.content != content);
+
+                if should_update {
+                    let parsed = match content.parse::<Editorconfig>() {
+                        Ok(parsed) => Some(parsed),
+                        Err(e) => {
+                            self.external_configs.insert(
+                                abs_path.clone(),
+                                ExternalEditorconfigData {
+                                    config: EditorconfigData {
+                                        content: content.to_owned(),
+                                        parsed: None,
+                                    },
+                                    _watch_task: None,
+                                },
+                            );
+                            let state = self
+                                .worktree_editorconfig_state
+                                .entry(worktree_id)
+                                .or_default();
+                            let paths = state
+                                .external_config_paths
+                                .get_or_insert_with(BTreeSet::new);
+                            paths.insert(abs_path.clone());
+
+                            cx.emit(EditorconfigEvent::ExternalConfigChanged {
+                                worktree_id,
+                                abs_path: abs_path.clone(),
+                            });
+
+                            return Err(InvalidSettingsError::Editorconfig {
+                                message: e.to_string(),
+                                path: LocalSettingsPath::OutsideWorktree(
+                                    abs_path.join(EDITORCONFIG_NAME).into(),
+                                ),
+                            });
+                        }
+                    };
+
+                    self.external_configs.insert(
+                        abs_path.clone(),
+                        ExternalEditorconfigData {
+                            config: EditorconfigData {
+                                content: content.to_owned(),
+                                parsed,
+                            },
+                            _watch_task: None,
+                        },
+                    );
+
+                    let state = self
+                        .worktree_editorconfig_state
+                        .entry(worktree_id)
+                        .or_default();
+                    let paths = state
+                        .external_config_paths
+                        .get_or_insert_with(BTreeSet::new);
+                    paths.insert(abs_path.clone());
+                }
+
+                cx.emit(EditorconfigEvent::ExternalConfigChanged {
+                    worktree_id,
+                    abs_path: abs_path.clone(),
+                });
             }
         }
         Ok(())
@@ -119,21 +244,65 @@ impl EditorconfigStore {
         }
     }
 
-    pub fn local_internal_configs(
+    fn internal_configs(
         &self,
         root_id: WorktreeId,
-    ) -> impl '_ + Iterator<Item = (Arc<RelPath>, String, Option<Editorconfig>)> {
+    ) -> impl '_ + Iterator<Item = (&RelPath, &str, Option<&Editorconfig>)> {
         self.worktree_editorconfig_state
             .get(&root_id)
             .into_iter()
             .flat_map(|state| {
+                state.internal_configs.iter().map(|(path, data)| {
+                    (path.as_ref(), data.content.as_str(), data.parsed.as_ref())
+                })
+            })
+    }
+
+    fn external_configs(
+        &self,
+        worktree_id: WorktreeId,
+    ) -> impl '_ + Iterator<Item = (&Path, &str, Option<&Editorconfig>)> {
+        self.worktree_editorconfig_state
+            .get(&worktree_id)
+            .into_iter()
+            .flat_map(|state| {
                 state
-                    .internal_configs
+                    .external_config_paths
                     .iter()
-                    .map(|(path, (content, parsed_content))| {
-                        (path.clone(), content.clone(), parsed_content.clone())
+                    .flatten()
+                    .filter_map(|path| {
+                        self.external_configs.get(path).map(|entry| {
+                            (
+                                path.as_ref(),
+                                entry.config.content.as_str(),
+                                entry.config.parsed.as_ref(),
+                            )
+                        })
                     })
             })
+    }
+
+    pub fn get_configs(
+        &self,
+        worktree_id: WorktreeId,
+    ) -> impl '_ + Iterator<Item = (LocalSettingsPath, &str, Option<&Editorconfig>)> {
+        let external = self
+            .external_configs(worktree_id)
+            .map(|(path, content, parsed)| {
+                (
+                    LocalSettingsPath::OutsideWorktree(path.into()),
+                    content,
+                    parsed,
+                )
+            });
+
+        let internal = self
+            .internal_configs(worktree_id)
+            .map(|(path, content, parsed)| {
+                (LocalSettingsPath::InWorktree(path.into()), content, parsed)
+            });
+
+        external.chain(internal)
     }
 
     pub fn load_external_configs(
@@ -146,29 +315,22 @@ impl EditorconfigStore {
         let Some(state) = self.worktree_editorconfig_state.get(&worktree_id) else {
             return;
         };
+
+        // We don't currently watch for newly added or removed external editorconfig files, but only use
+        // the external editorconfig files discovered when the worktree was added
         if state.external_config_paths.is_some() {
             return;
         }
 
-        // We don't always traverse up to look for external editor configs, only when there exists some internal config for the worktree
-        // We can use a better heuristic here to figure out when to/not to traverse
+        // We only traverse up the directory tree when there exists some internal config for the worktree,
+        // since we are not sure if the project needs editorconfig lookup or not.
         if state.internal_configs.is_empty() {
             return;
-        }
-
-        if let Some((_, Some(parsed))) = state.internal_configs.get(RelPath::empty()) {
-            if parsed.is_root {
-                return;
-            }
         }
 
         let task = cx.spawn(async move |this, cx| {
             let external_configs =
                 Self::reload_external_config_chain(&this, worktree_path, &fs, &cx).await;
-            // todo(smit): need to think more on this case
-            if external_configs.is_empty() {
-                return;
-            }
             this.update(cx, |this, cx| {
                 let state = this
                     .worktree_editorconfig_state
@@ -180,19 +342,26 @@ impl EditorconfigStore {
                         .map(|(path, _)| path.clone())
                         .collect(),
                 );
-                for (dir_path, config) in external_configs {
+                for (dir_path, config_data) in external_configs {
                     if this.external_configs.contains_key(&dir_path) {
                         continue;
                     }
                     let editorconfig_path = dir_path.join(EDITORCONFIG_NAME);
                     let watcher_task = Self::watch_external_config(
                         fs.clone(),
+                        worktree_id,
                         dir_path.clone(),
                         editorconfig_path,
                         cx,
                     );
-                    this.external_configs
-                        .insert(dir_path, (config, watcher_task));
+                    let config = config_data.unwrap_or_default();
+                    this.external_configs.insert(
+                        dir_path,
+                        ExternalEditorconfigData {
+                            config,
+                            _watch_task: Some(watcher_task),
+                        },
+                    );
                 }
             })
             .ok();
@@ -209,12 +378,12 @@ impl EditorconfigStore {
         worktree_path: Arc<Path>,
         fs: &Arc<dyn Fs>,
         cx: &AsyncApp,
-    ) -> Vec<(Arc<Path>, Option<Editorconfig>)> {
+    ) -> Vec<(Arc<Path>, Option<EditorconfigData>)> {
         let cached_configs: HashMap<Arc<Path>, Option<Editorconfig>> = this
             .read_with(cx, |this, _| {
                 this.external_configs
                     .iter()
-                    .map(|(path, (config, _))| (path.clone(), config.clone()))
+                    .map(|(path, entry)| (path.clone(), entry.config.parsed.clone()))
                     .collect()
             })
             .unwrap_or_default();
@@ -236,7 +405,13 @@ impl EditorconfigStore {
                     match content.parse::<Editorconfig>() {
                         Ok(parsed) => {
                             let is_root = parsed.is_root;
-                            external_configs.push((dir_path, Some(parsed)));
+                            external_configs.push((
+                                dir_path,
+                                Some(EditorconfigData {
+                                    content,
+                                    parsed: Some(parsed),
+                                }),
+                            ));
                             if is_root {
                                 break;
                             }
@@ -247,6 +422,13 @@ impl EditorconfigStore {
                                 editorconfig_path,
                                 err
                             );
+                            external_configs.push((
+                                dir_path,
+                                Some(EditorconfigData {
+                                    content,
+                                    parsed: None,
+                                }),
+                            ));
                         }
                     }
                 }
@@ -259,8 +441,9 @@ impl EditorconfigStore {
 
     fn watch_external_config(
         fs: Arc<dyn Fs>,
+        worktree_id: WorktreeId,
         dir_path: Arc<Path>,
-        editorconfig_path: std::path::PathBuf,
+        editorconfig_path: PathBuf,
         cx: &mut Context<Self>,
     ) -> Task<()> {
         let mut config_rx =
@@ -287,9 +470,13 @@ impl EditorconfigStore {
                 let dir_path = dir_path.clone();
                 this.update(cx, |this, cx| {
                     if let Some(entry) = this.external_configs.get_mut(&dir_path) {
-                        entry.0 = parsed;
+                        entry.config.content = content.clone();
+                        entry.config.parsed = parsed;
                     }
-                    cx.emit(());
+                    cx.emit(EditorconfigEvent::ExternalConfigChanged {
+                        worktree_id,
+                        abs_path: dir_path,
+                    });
                 })
                 .ok();
             }
@@ -306,30 +493,26 @@ impl EditorconfigStore {
         let empty_path: Arc<RelPath> = RelPath::empty().into();
         let internal_root_config_is_root = state
             .and_then(|state| state.internal_configs.get(&empty_path))
-            .and_then(|(_, parsed)| parsed.as_ref())
+            .and_then(|data| data.parsed.as_ref())
             .is_some_and(|ec| ec.is_root);
 
         if !internal_root_config_is_root {
-            if let Some(state) = state {
-                for path in state.external_config_paths.iter().flatten() {
-                    if let Some((Some(parsed_editorconfig), _)) = self.external_configs.get(path) {
-                        if parsed_editorconfig.is_root {
-                            properties = EditorconfigProperties::new();
-                        }
-                        for section in parsed_editorconfig.sections.clone() {
-                            section
-                                .apply_to(&mut properties, for_path.as_std_path())
-                                .log_err()?;
-                        }
+            for (_, _, parsed_editorconfig) in self.external_configs(for_worktree) {
+                if let Some(parsed_editorconfig) = parsed_editorconfig {
+                    if parsed_editorconfig.is_root {
+                        properties = EditorconfigProperties::new();
+                    }
+                    for section in &parsed_editorconfig.sections {
+                        section
+                            .apply_to(&mut properties, for_path.as_std_path())
+                            .log_err()?;
                     }
                 }
             }
         }
 
-        for (directory_with_config, _, parsed_editorconfig) in
-            self.local_internal_configs(for_worktree)
-        {
-            if !for_path.starts_with(&directory_with_config) {
+        for (directory_with_config, _, parsed_editorconfig) in self.internal_configs(for_worktree) {
+            if !for_path.starts_with(directory_with_config) {
                 properties.use_fallbacks();
                 return Some(properties);
             }
@@ -337,7 +520,7 @@ impl EditorconfigStore {
             if parsed_editorconfig.is_root {
                 properties = EditorconfigProperties::new();
             }
-            for section in parsed_editorconfig.sections {
+            for section in &parsed_editorconfig.sections {
                 section
                     .apply_to(&mut properties, for_path.as_std_path())
                     .log_err()?;

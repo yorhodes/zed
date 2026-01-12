@@ -17,7 +17,7 @@ use std::{
     any::{Any, TypeId, type_name},
     fmt::Debug,
     ops::Range,
-    path::PathBuf,
+    path::{Path, PathBuf},
     rc::Rc,
     str,
     sync::Arc,
@@ -206,6 +206,33 @@ pub enum LocalSettingsKind {
     Tasks,
     Editorconfig,
     Debug,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub enum LocalSettingsPath {
+    InWorktree(Arc<RelPath>),
+    OutsideWorktree(Arc<Path>),
+}
+
+impl LocalSettingsPath {
+    pub fn is_outside_worktree(&self) -> bool {
+        matches!(self, Self::OutsideWorktree(_))
+    }
+
+    pub fn to_proto(&self) -> String {
+        match self {
+            Self::InWorktree(path) => path.to_proto(),
+            Self::OutsideWorktree(path) => path.to_string_lossy().to_string(),
+        }
+    }
+
+    pub fn from_proto(path: &str, is_outside_worktree: bool) -> anyhow::Result<Self> {
+        if is_outside_worktree {
+            Ok(Self::OutsideWorktree(PathBuf::from(path).into()))
+        } else {
+            Ok(Self::InWorktree(RelPath::from_proto(path)?))
+        }
+    }
 }
 
 impl Global for SettingsStore {}
@@ -810,19 +837,17 @@ impl SettingsStore {
     pub fn set_local_settings(
         &mut self,
         root_id: WorktreeId,
-        directory_path: Arc<RelPath>,
+        path: LocalSettingsPath,
         kind: LocalSettingsKind,
         settings_content: Option<&str>,
         cx: &mut App,
     ) -> std::result::Result<(), InvalidSettingsError> {
+        let content = settings_content
+            .map(|content| content.trim())
+            .filter(|content| !content.is_empty());
         let mut zed_settings_changed = false;
-        match (
-            kind,
-            settings_content
-                .map(|content| content.trim())
-                .filter(|content| !content.is_empty()),
-        ) {
-            (LocalSettingsKind::Tasks, _) => {
+        match (path.clone(), kind, content) {
+            (LocalSettingsPath::InWorktree(directory_path), LocalSettingsKind::Tasks, _) => {
                 return Err(InvalidSettingsError::Tasks {
                     message: "Attempted to submit tasks into the settings store".to_string(),
                     path: directory_path
@@ -831,7 +856,7 @@ impl SettingsStore {
                         .to_path_buf(),
                 });
             }
-            (LocalSettingsKind::Debug, _) => {
+            (LocalSettingsPath::InWorktree(directory_path), LocalSettingsKind::Debug, _) => {
                 return Err(InvalidSettingsError::Debug {
                     message: "Attempted to submit debugger config into the settings store"
                         .to_string(),
@@ -841,7 +866,7 @@ impl SettingsStore {
                         .to_path_buf(),
                 });
             }
-            (LocalSettingsKind::Settings, None) => {
+            (LocalSettingsPath::InWorktree(directory_path), LocalSettingsKind::Settings, None) => {
                 zed_settings_changed = self
                     .local_settings
                     .remove(&(root_id, directory_path.clone()))
@@ -849,12 +874,11 @@ impl SettingsStore {
                 self.file_errors
                     .remove(&SettingsFile::Project((root_id, directory_path.clone())));
             }
-            (LocalSettingsKind::Editorconfig, None) => {
-                self.editorconfig_store.update(cx, |store, _cx| {
-                    store.set_local_internal_configs(root_id, directory_path.clone(), None)
-                })?;
-            }
-            (LocalSettingsKind::Settings, Some(settings_contents)) => {
+            (
+                LocalSettingsPath::InWorktree(directory_path),
+                LocalSettingsKind::Settings,
+                Some(settings_contents),
+            ) => {
                 let (new_settings, parse_result) = self
                     .parse_and_migrate_zed_settings::<ProjectSettingsContent>(
                         settings_contents,
@@ -888,19 +912,20 @@ impl SettingsStore {
                     }
                 }
             }
-            (LocalSettingsKind::Editorconfig, Some(editorconfig_contents)) => {
-                self.editorconfig_store.update(cx, |store, _cx| {
-                    store.set_local_internal_configs(
-                        root_id,
-                        directory_path.clone(),
-                        Some(editorconfig_contents),
-                    )
+            (directory_path, LocalSettingsKind::Editorconfig, editorconfig_contents) => {
+                self.editorconfig_store.update(cx, |store, cx| {
+                    store.set_config(root_id, directory_path, editorconfig_contents, cx)
                 })?;
             }
-        };
-
-        if zed_settings_changed {
-            self.recompute_values(Some((root_id, &directory_path)), cx);
+            (LocalSettingsPath::OutsideWorktree(_), _, _) => {
+                // Only supported by editor config at the moment
+                unreachable!()
+            }
+        }
+        if let LocalSettingsPath::InWorktree(directory_path) = &path {
+            if zed_settings_changed {
+                self.recompute_values(Some((root_id, &directory_path)), cx);
+            }
         }
         Ok(())
     }
@@ -1205,13 +1230,31 @@ impl SettingsParseResult {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum InvalidSettingsError {
-    LocalSettings { path: Arc<RelPath>, message: String },
-    UserSettings { message: String },
-    ServerSettings { message: String },
-    DefaultSettings { message: String },
-    Editorconfig { path: Arc<RelPath>, message: String },
-    Tasks { path: PathBuf, message: String },
-    Debug { path: PathBuf, message: String },
+    LocalSettings {
+        path: Arc<RelPath>,
+        message: String,
+    },
+    UserSettings {
+        message: String,
+    },
+    ServerSettings {
+        message: String,
+    },
+    DefaultSettings {
+        message: String,
+    },
+    Editorconfig {
+        path: LocalSettingsPath,
+        message: String,
+    },
+    Tasks {
+        path: PathBuf,
+        message: String,
+    },
+    Debug {
+        path: PathBuf,
+        message: String,
+    },
 }
 
 impl std::fmt::Display for InvalidSettingsError {
@@ -1414,7 +1457,7 @@ mod tests {
         store
             .set_local_settings(
                 WorktreeId::from_usize(1),
-                rel_path("root1").into(),
+                LocalSettingsPath::InWorktree(rel_path("root1").into()),
                 LocalSettingsKind::Settings,
                 Some(r#"{ "tab_size": 5 }"#),
                 cx,
@@ -1423,7 +1466,7 @@ mod tests {
         store
             .set_local_settings(
                 WorktreeId::from_usize(1),
-                rel_path("root1/subdir").into(),
+                LocalSettingsPath::InWorktree(rel_path("root1/subdir").into()),
                 LocalSettingsKind::Settings,
                 Some(r#"{ "preferred_line_length": 50 }"#),
                 cx,
@@ -1433,7 +1476,7 @@ mod tests {
         store
             .set_local_settings(
                 WorktreeId::from_usize(1),
-                rel_path("root2").into(),
+                LocalSettingsPath::InWorktree(rel_path("root2").into()),
                 LocalSettingsKind::Settings,
                 Some(r#"{ "tab_size": 9, "auto_update": true}"#),
                 cx,
@@ -1904,7 +1947,7 @@ mod tests {
         store
             .set_local_settings(
                 local.0,
-                local.1.clone(),
+                LocalSettingsPath::InWorktree(local.1.clone()),
                 LocalSettingsKind::Settings,
                 Some(r#"{}"#),
                 cx,
@@ -1938,7 +1981,7 @@ mod tests {
         store
             .set_local_settings(
                 local.0,
-                local.1.clone(),
+                LocalSettingsPath::InWorktree(local.1.clone()),
                 LocalSettingsKind::Settings,
                 Some(r#"{"preferred_line_length": 80}"#),
                 cx,
@@ -1995,7 +2038,7 @@ mod tests {
         store
             .set_local_settings(
                 local_1.0,
-                local_1.1.clone(),
+                LocalSettingsPath::InWorktree(local_1.1.clone()),
                 LocalSettingsKind::Settings,
                 Some(r#"{"preferred_line_length": 1}"#),
                 cx,
@@ -2004,7 +2047,7 @@ mod tests {
         store
             .set_local_settings(
                 local_1_child.0,
-                local_1_child.1.clone(),
+                LocalSettingsPath::InWorktree(local_1_child.1.clone()),
                 LocalSettingsKind::Settings,
                 Some(r#"{}"#),
                 cx,
@@ -2013,7 +2056,7 @@ mod tests {
         store
             .set_local_settings(
                 local_2.0,
-                local_2.1.clone(),
+                LocalSettingsPath::InWorktree(local_2.1.clone()),
                 LocalSettingsKind::Settings,
                 Some(r#"{"preferred_line_length": 2}"#),
                 cx,
@@ -2022,7 +2065,7 @@ mod tests {
         store
             .set_local_settings(
                 local_2_child.0,
-                local_2_child.1.clone(),
+                LocalSettingsPath::InWorktree(local_2_child.1.clone()),
                 LocalSettingsKind::Settings,
                 Some(r#"{}"#),
                 cx,
@@ -2044,7 +2087,7 @@ mod tests {
         store
             .set_local_settings(
                 local_1_adjacent_child.0,
-                local_1_adjacent_child.1.clone(),
+                LocalSettingsPath::InWorktree(local_1_adjacent_child.1.clone()),
                 LocalSettingsKind::Settings,
                 Some(r#"{}"#),
                 cx,
@@ -2053,7 +2096,7 @@ mod tests {
         store
             .set_local_settings(
                 local_1_child.0,
-                local_1_child.1.clone(),
+                LocalSettingsPath::InWorktree(local_1_child.1.clone()),
                 LocalSettingsKind::Settings,
                 Some(r#"{"preferred_line_length": 3}"#),
                 cx,
@@ -2067,7 +2110,7 @@ mod tests {
         store
             .set_local_settings(
                 local_1_adjacent_child.0,
-                local_1_adjacent_child.1,
+                LocalSettingsPath::InWorktree(local_1_adjacent_child.1),
                 LocalSettingsKind::Settings,
                 Some(r#"{"preferred_line_length": 3}"#),
                 cx,
@@ -2076,7 +2119,7 @@ mod tests {
         store
             .set_local_settings(
                 local_1_child.0,
-                local_1_child.1.clone(),
+                LocalSettingsPath::InWorktree(local_1_child.1.clone()),
                 LocalSettingsKind::Settings,
                 Some(r#"{}"#),
                 cx,
@@ -2111,7 +2154,7 @@ mod tests {
         store
             .set_local_settings(
                 wt0_root.0,
-                wt0_root.1.clone(),
+                LocalSettingsPath::InWorktree(wt0_root.1.clone()),
                 LocalSettingsKind::Settings,
                 Some(r#"{"preferred_line_length": 80}"#),
                 cx,
@@ -2120,7 +2163,7 @@ mod tests {
         store
             .set_local_settings(
                 wt0_child1.0,
-                wt0_child1.1.clone(),
+                LocalSettingsPath::InWorktree(wt0_child1.1.clone()),
                 LocalSettingsKind::Settings,
                 Some(r#"{"preferred_line_length": 120}"#),
                 cx,
@@ -2129,7 +2172,7 @@ mod tests {
         store
             .set_local_settings(
                 wt0_child2.0,
-                wt0_child2.1.clone(),
+                LocalSettingsPath::InWorktree(wt0_child2.1.clone()),
                 LocalSettingsKind::Settings,
                 Some(r#"{}"#),
                 cx,
@@ -2139,7 +2182,7 @@ mod tests {
         store
             .set_local_settings(
                 wt1_root.0,
-                wt1_root.1.clone(),
+                LocalSettingsPath::InWorktree(wt1_root.1.clone()),
                 LocalSettingsKind::Settings,
                 Some(r#"{"preferred_line_length": 90}"#),
                 cx,
@@ -2148,7 +2191,7 @@ mod tests {
         store
             .set_local_settings(
                 wt1_subdir.0,
-                wt1_subdir.1.clone(),
+                LocalSettingsPath::InWorktree(wt1_subdir.1.clone()),
                 LocalSettingsKind::Settings,
                 Some(r#"{}"#),
                 cx,
@@ -2199,7 +2242,7 @@ mod tests {
         store
             .set_local_settings(
                 wt0_deep_child.0,
-                wt0_deep_child.1.clone(),
+                LocalSettingsPath::InWorktree(wt0_deep_child.1.clone()),
                 LocalSettingsKind::Settings,
                 Some(r#"{"preferred_line_length": 140}"#),
                 cx,

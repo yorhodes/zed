@@ -914,7 +914,7 @@ impl SettingsStore {
             }
             (directory_path, LocalSettingsKind::Editorconfig, editorconfig_contents) => {
                 self.editorconfig_store.update(cx, |store, cx| {
-                    store.set_config(root_id, directory_path, editorconfig_contents, cx)
+                    store.set_configs(root_id, directory_path, editorconfig_contents, cx)
                 })?;
             }
             (LocalSettingsPath::OutsideWorktree(_), _, _) => {

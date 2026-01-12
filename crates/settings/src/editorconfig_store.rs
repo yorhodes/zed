@@ -49,15 +49,10 @@ struct ExternalEditorconfigData {
 }
 
 #[derive(Clone, Debug)]
-pub enum EditorconfigEvent {
-    InternalConfigChanged {
-        worktree_id: WorktreeId,
-        path: Arc<RelPath>,
-    },
-    ExternalConfigChanged {
-        worktree_id: WorktreeId,
-        abs_path: Arc<Path>,
-    },
+pub struct EditorconfigEvent {
+    pub worktree_id: WorktreeId,
+    pub path: LocalSettingsPath,
+    pub content: Option<String>,
 }
 
 #[derive(Default)]
@@ -77,7 +72,7 @@ pub struct WorktreeEditorconfigState {
 }
 
 impl EditorconfigStore {
-    pub(crate) fn set_config(
+    pub(crate) fn set_configs(
         &mut self,
         worktree_id: WorktreeId,
         path: LocalSettingsPath,
@@ -97,11 +92,6 @@ impl EditorconfigStore {
                         paths.remove(abs_path);
                     }
                 }
-                // do something about this
-                cx.emit(EditorconfigEvent::ExternalConfigChanged {
-                    worktree_id,
-                    abs_path: abs_path.clone(),
-                });
             }
             (LocalSettingsPath::InWorktree(rel_path), Some(content)) => {
                 let state = self
@@ -184,12 +174,6 @@ impl EditorconfigStore {
                                 .external_config_paths
                                 .get_or_insert_with(BTreeSet::new);
                             paths.insert(abs_path.clone());
-
-                            cx.emit(EditorconfigEvent::ExternalConfigChanged {
-                                worktree_id,
-                                abs_path: abs_path.clone(),
-                            });
-
                             return Err(InvalidSettingsError::Editorconfig {
                                 message: e.to_string(),
                                 path: LocalSettingsPath::OutsideWorktree(
@@ -219,11 +203,6 @@ impl EditorconfigStore {
                         .get_or_insert_with(BTreeSet::new);
                     paths.insert(abs_path.clone());
                 }
-
-                cx.emit(EditorconfigEvent::ExternalConfigChanged {
-                    worktree_id,
-                    abs_path: abs_path.clone(),
-                });
             }
         }
         Ok(())
@@ -282,7 +261,7 @@ impl EditorconfigStore {
             })
     }
 
-    pub fn get_configs(
+    pub fn local_editorconfig_settings(
         &self,
         worktree_id: WorktreeId,
     ) -> impl '_ + Iterator<Item = (LocalSettingsPath, &str, Option<&Editorconfig>)> {
@@ -295,13 +274,11 @@ impl EditorconfigStore {
                     parsed,
                 )
             });
-
         let internal = self
             .internal_configs(worktree_id)
             .map(|(path, content, parsed)| {
                 (LocalSettingsPath::InWorktree(path.into()), content, parsed)
             });
-
         external.chain(internal)
     }
 
@@ -317,14 +294,8 @@ impl EditorconfigStore {
         };
 
         // We don't currently watch for newly added or removed external editorconfig files, but only use
-        // the external editorconfig files discovered when the worktree was added
+        // the external editorconfig files discovered when the first internal editorconfig is detected in the worktree
         if state.external_config_paths.is_some() {
-            return;
-        }
-
-        // We only traverse up the directory tree when there exists some internal config for the worktree,
-        // since we are not sure if the project needs editorconfig lookup or not.
-        if state.internal_configs.is_empty() {
             return;
         }
 
@@ -468,14 +439,16 @@ impl EditorconfigStore {
                 };
 
                 let dir_path = dir_path.clone();
+                let content = Some(content).filter(|c| !c.is_empty());
                 this.update(cx, |this, cx| {
                     if let Some(entry) = this.external_configs.get_mut(&dir_path) {
-                        entry.config.content = content.clone();
+                        entry.config.content = content.clone().unwrap_or_default();
                         entry.config.parsed = parsed;
                     }
-                    cx.emit(EditorconfigEvent::ExternalConfigChanged {
+                    cx.emit(EditorconfigEvent {
                         worktree_id,
-                        abs_path: dir_path,
+                        path: LocalSettingsPath::OutsideWorktree(dir_path),
+                        content,
                     });
                 })
                 .ok();

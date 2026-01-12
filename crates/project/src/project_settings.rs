@@ -751,20 +751,22 @@ impl SettingsObserver {
         let _editorconfig_watcher = cx.subscribe(
             &editorconfig_store,
             |this, _, event: &EditorconfigEvent, cx| {
-                if let Some(worktree) = this
-                    .worktree_store
-                    .read(cx)
-                    .worktree_for_id(event.worktree_id, cx)
-                {
-                    this.update_settings(
-                        worktree,
-                        [(
-                            event.path.clone(),
-                            LocalSettingsKind::Editorconfig,
-                            event.content.clone(),
-                        )],
-                        cx,
-                    );
+                for worktree_id in &event.worktree_ids {
+                    if let Some(worktree) = this
+                        .worktree_store
+                        .read(cx)
+                        .worktree_for_id(*worktree_id, cx)
+                    {
+                        this.update_settings(
+                            worktree,
+                            [(
+                                event.path.clone(),
+                                LocalSettingsKind::Editorconfig,
+                                event.content.clone(),
+                            )],
+                            cx,
+                        );
+                    }
                 }
             },
         );
@@ -1053,6 +1055,23 @@ impl SettingsObserver {
                 let Some(settings_dir) = path.parent().map(Arc::from) else {
                     continue;
                 };
+                if matches!(change, PathChange::Loaded) || matches!(change, PathChange::Added) {
+                    let worktree_id = worktree.read(cx).id();
+                    let worktree_path = worktree.read(cx).abs_path();
+                    let fs = fs.clone();
+                    cx.update_global::<SettingsStore, _>(|store, cx| {
+                        store
+                            .editorconfig_store
+                            .update(cx, |editorconfig_store, cx| {
+                                editorconfig_store.load_external_configs(
+                                    worktree_id,
+                                    worktree_path,
+                                    fs,
+                                    cx,
+                                );
+                            });
+                    });
+                }
                 (settings_dir, LocalSettingsKind::Editorconfig)
             } else {
                 continue;

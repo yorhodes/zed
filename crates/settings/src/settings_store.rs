@@ -872,7 +872,7 @@ impl SettingsStore {
                     .remove(&(root_id, directory_path.clone()))
                     .is_some();
                 self.file_errors
-                    .remove(&SettingsFile::Project((root_id, directory_path.clone())));
+                    .remove(&SettingsFile::Project((root_id, directory_path)));
             }
             (
                 LocalSettingsPath::InWorktree(directory_path),
@@ -892,7 +892,7 @@ impl SettingsStore {
                     }),
                 }?;
                 if let Some(new_settings) = new_settings {
-                    match self.local_settings.entry((root_id, directory_path.clone())) {
+                    match self.local_settings.entry((root_id, directory_path)) {
                         btree_map::Entry::Vacant(v) => {
                             v.insert(SettingsContent {
                                 project: new_settings,

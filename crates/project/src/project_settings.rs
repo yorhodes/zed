@@ -764,6 +764,7 @@ impl SettingsObserver {
                                 LocalSettingsKind::Editorconfig,
                                 event.content.clone(),
                             )],
+                            false,
                             cx,
                         );
                     }
@@ -1063,7 +1064,7 @@ impl SettingsObserver {
                         store
                             .editorconfig_store
                             .update(cx, |editorconfig_store, cx| {
-                                editorconfig_store.load_external_configs(
+                                editorconfig_store.discover_external_configs_chain(
                                     worktree_id,
                                     worktree_path,
                                     fs,

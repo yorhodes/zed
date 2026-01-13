@@ -283,7 +283,7 @@ impl SettingsStore {
 
             merged_settings: default_settings,
             local_settings: BTreeMap::default(),
-            editorconfig_store: cx.new(|_| EditorconfigStore::default()),
+            editorconfig_store: cx.new(|_| EditorconfigStore::new_local()),
             setting_file_updates_tx,
             _setting_file_updates: cx.spawn(async move |cx| {
                 while let Some(setting_file_update) = setting_file_updates_rx.next().await {
@@ -952,7 +952,7 @@ impl SettingsStore {
             .retain(|(worktree_id, _), _| worktree_id != &root_id);
 
         self.editorconfig_store
-            .update(cx, |store, _cx| store.remove_worktree(root_id));
+            .update(cx, |store, _cx| store.remove_for_worktree(root_id));
 
         for setting_value in self.setting_values.values_mut() {
             setting_value.clear_local_values(root_id);

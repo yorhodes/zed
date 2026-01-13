@@ -42,10 +42,12 @@ pub struct EditorconfigEvent {
 
 impl EventEmitter<EditorconfigEvent> for EditorconfigStore {}
 
+#[derive(Default)]
 pub struct EditorconfigStore {
     external_configs: BTreeMap<Arc<Path>, (String, Option<Editorconfig>)>,
     worktree_state: BTreeMap<WorktreeId, EditorconfigWorktreeState>,
-    external_config_local_state: Option<ExternalConfigLocalState>,
+    local_external_config_watchers: BTreeMap<Arc<Path>, Task<()>>,
+    local_external_config_discovery_tasks: BTreeMap<WorktreeId, Task<()>>,
 }
 
 #[derive(Default)]
@@ -54,21 +56,7 @@ struct EditorconfigWorktreeState {
     external_config_paths: BTreeSet<Arc<Path>>,
 }
 
-#[derive(Default)]
-struct ExternalConfigLocalState {
-    watchers: BTreeMap<Arc<Path>, Task<()>>,
-    discovery_tasks: BTreeMap<WorktreeId, Task<()>>,
-}
-
 impl EditorconfigStore {
-    pub fn new_local() -> Self {
-        Self {
-            external_configs: BTreeMap::new(),
-            worktree_state: BTreeMap::new(),
-            external_config_local_state: Some(ExternalConfigLocalState::default()),
-        }
-    }
-
     pub(crate) fn set_configs(
         &mut self,
         worktree_id: WorktreeId,
@@ -91,9 +79,7 @@ impl EditorconfigStore {
                     .any(|state| state.external_config_paths.contains(abs_path));
                 if !still_in_use {
                     self.external_configs.remove(abs_path);
-                    if let Some(local_state) = &mut self.external_config_local_state {
-                        local_state.watchers.remove(abs_path);
-                    }
+                    self.local_external_config_watchers.remove(abs_path);
                 }
             }
             (LocalSettingsPath::InWorktree(rel_path), Some(content)) => {
@@ -152,9 +138,7 @@ impl EditorconfigStore {
     }
 
     pub(crate) fn remove_for_worktree(&mut self, root_id: WorktreeId) {
-        if let Some(local_state) = &mut self.external_config_local_state {
-            local_state.discovery_tasks.remove(&root_id);
-        }
+        self.local_external_config_discovery_tasks.remove(&root_id);
         let Some(removed) = self.worktree_state.remove(&root_id) else {
             return;
         };
@@ -166,9 +150,7 @@ impl EditorconfigStore {
         for path in removed.external_config_paths.iter() {
             if !paths_in_use.contains(path) {
                 self.external_configs.remove(path);
-                if let Some(local_state) = &mut self.external_config_local_state {
-                    local_state.watchers.remove(path);
-                }
+                self.local_external_config_watchers.remove(path);
             }
         }
     }
@@ -225,19 +207,18 @@ impl EditorconfigStore {
         external.chain(internal)
     }
 
-    pub fn discover_external_configs_chain(
+    pub fn discover_local_external_configs_chain(
         &mut self,
         worktree_id: WorktreeId,
         worktree_path: Arc<Path>,
         fs: Arc<dyn Fs>,
         cx: &mut Context<Self>,
     ) {
-        let Some(local_state) = &self.external_config_local_state else {
-            return;
-        };
-
         // We should only have one discovery task per worktree.
-        if local_state.discovery_tasks.contains_key(&worktree_id) {
+        if self
+            .local_external_config_discovery_tasks
+            .contains_key(&worktree_id)
+        {
             return;
         }
 
@@ -259,9 +240,6 @@ impl EditorconfigStore {
                 };
 
                 this.update(cx, |this, cx| {
-                    let Some(local_state) = &mut this.external_config_local_state else {
-                        return;
-                    };
                     for dir_path in discovered_paths {
                         // We insert it here so that watchers can send events to appropriate worktrees.
                         // external_config_paths gets populated again in set_configs.
@@ -270,7 +248,7 @@ impl EditorconfigStore {
                             .or_default()
                             .external_config_paths
                             .insert(dir_path.clone());
-                        if local_state.watchers.contains_key(&dir_path) {
+                        if this.local_external_config_watchers.contains_key(&dir_path) {
                             if let Some(existing_config) = this.external_configs.get(&dir_path) {
                                 cx.emit(EditorconfigEvent {
                                     path: LocalSettingsPath::OutsideWorktree(dir_path),
@@ -282,8 +260,8 @@ impl EditorconfigStore {
                             }
                         } else {
                             let watcher =
-                                Self::watch_external_config(fs.clone(), dir_path.clone(), cx);
-                            local_state.watchers.insert(dir_path, watcher);
+                                Self::watch_local_external_config(fs.clone(), dir_path.clone(), cx);
+                            this.local_external_config_watchers.insert(dir_path, watcher);
                         }
                     }
                 })
@@ -291,12 +269,11 @@ impl EditorconfigStore {
             }
         });
 
-        if let Some(local_state) = &mut self.external_config_local_state {
-            local_state.discovery_tasks.insert(worktree_id, task);
-        }
+        self.local_external_config_discovery_tasks
+            .insert(worktree_id, task);
     }
 
-    fn watch_external_config(
+    fn watch_local_external_config(
         fs: Arc<dyn Fs>,
         dir_path: Arc<Path>,
         cx: &mut Context<Self>,

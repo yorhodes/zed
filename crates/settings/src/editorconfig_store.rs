@@ -250,20 +250,24 @@ impl EditorconfigStore {
                             .or_default()
                             .external_config_paths
                             .insert(dir_path.clone());
-                        if this.local_external_config_watchers.contains_key(&dir_path) {
-                            if let Some(existing_config) = this.external_configs.get(&dir_path) {
-                                cx.emit(EditorconfigEvent::ExternalConfigChanged {
-                                    path: LocalSettingsPath::OutsideWorktree(dir_path),
-                                    content: Some(existing_config.0.clone()),
-                                    affected_worktree_ids: vec![worktree_id],
-                                });
-                            } else {
-                                log::error!("Watcher exists for {dir_path:?} but no config found in external_configs");
+                        match this.local_external_config_watchers.entry(dir_path.clone()) {
+                            std::collections::btree_map::Entry::Occupied(_) => {
+                                if let Some(existing_config) = this.external_configs.get(&dir_path)
+                                {
+                                    cx.emit(EditorconfigEvent::ExternalConfigChanged {
+                                        path: LocalSettingsPath::OutsideWorktree(dir_path),
+                                        content: Some(existing_config.0.clone()),
+                                        affected_worktree_ids: vec![worktree_id],
+                                    });
+                                } else {
+                                    log::error!("Watcher exists for {dir_path:?} but no config found in external_configs");
+                                }
                             }
-                        } else {
-                            let watcher =
-                                Self::watch_local_external_config(fs.clone(), dir_path.clone(), cx);
-                            this.local_external_config_watchers.insert(dir_path, watcher);
+                            std::collections::btree_map::Entry::Vacant(entry) => {
+                                let watcher =
+                                    Self::watch_local_external_config(fs.clone(), dir_path, cx);
+                                entry.insert(watcher);
+                            }
                         }
                     }
                 })

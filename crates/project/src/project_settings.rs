@@ -751,7 +751,12 @@ impl SettingsObserver {
         let _editorconfig_watcher = cx.subscribe(
             &editorconfig_store,
             |this, _, event: &EditorconfigEvent, cx| {
-                for worktree_id in &event.worktree_ids {
+                let EditorconfigEvent::ExternalConfigChanged {
+                    path,
+                    content,
+                    affected_worktree_ids,
+                } = event;
+                for worktree_id in affected_worktree_ids {
                     if let Some(worktree) = this
                         .worktree_store
                         .read(cx)
@@ -760,9 +765,9 @@ impl SettingsObserver {
                         this.update_settings(
                             worktree,
                             [(
-                                event.path.clone(),
+                                path.clone(),
                                 LocalSettingsKind::Editorconfig,
-                                event.content.clone(),
+                                content.clone(),
                             )],
                             false,
                             cx,

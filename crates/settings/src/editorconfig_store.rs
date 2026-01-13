@@ -34,10 +34,12 @@ impl FromStr for Editorconfig {
 }
 
 #[derive(Clone, Debug)]
-pub struct EditorconfigEvent {
-    pub path: LocalSettingsPath,
-    pub content: Option<String>,
-    pub worktree_ids: Vec<WorktreeId>,
+pub enum EditorconfigEvent {
+    ExternalConfigChanged {
+        path: LocalSettingsPath,
+        content: Option<String>,
+        affected_worktree_ids: Vec<WorktreeId>,
+    },
 }
 
 impl EventEmitter<EditorconfigEvent> for EditorconfigStore {}
@@ -250,10 +252,10 @@ impl EditorconfigStore {
                             .insert(dir_path.clone());
                         if this.local_external_config_watchers.contains_key(&dir_path) {
                             if let Some(existing_config) = this.external_configs.get(&dir_path) {
-                                cx.emit(EditorconfigEvent {
+                                cx.emit(EditorconfigEvent::ExternalConfigChanged {
                                     path: LocalSettingsPath::OutsideWorktree(dir_path),
                                     content: Some(existing_config.0.clone()),
-                                    worktree_ids: vec![worktree_id],
+                                    affected_worktree_ids: vec![worktree_id],
                                 });
                             } else {
                                 log::error!("Watcher exists for {dir_path:?} but no config found in external_configs");
@@ -286,7 +288,7 @@ impl EditorconfigStore {
                 let content = Some(content).filter(|c| !c.is_empty());
                 let dir_path = dir_path.clone();
                 this.update(cx, |this, cx| {
-                    let worktree_ids: Vec<WorktreeId> = this
+                    let affected_worktree_ids: Vec<WorktreeId> = this
                         .worktree_state
                         .iter()
                         .filter_map(|(id, state)| {
@@ -297,10 +299,10 @@ impl EditorconfigStore {
                         })
                         .collect();
 
-                    cx.emit(EditorconfigEvent {
+                    cx.emit(EditorconfigEvent::ExternalConfigChanged {
                         path: LocalSettingsPath::OutsideWorktree(dir_path),
                         content,
-                        worktree_ids,
+                        affected_worktree_ids,
                     });
                 })
                 .ok();

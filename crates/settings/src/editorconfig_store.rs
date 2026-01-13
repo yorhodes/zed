@@ -358,3 +358,24 @@ impl EditorconfigStore {
         Some(properties)
     }
 }
+
+#[cfg(any(test, feature = "test-support"))]
+impl EditorconfigStore {
+    pub fn test_state(&self) -> (Vec<WorktreeId>, Vec<Arc<Path>>, Vec<Arc<Path>>) {
+        let worktree_ids: Vec<_> = self.worktree_state.keys().copied().collect();
+        let external_paths: Vec<_> = self.external_configs.keys().cloned().collect();
+        let watcher_paths: Vec<_> = self
+            .local_external_config_watchers
+            .keys()
+            .cloned()
+            .collect();
+        (worktree_ids, external_paths, watcher_paths)
+    }
+
+    pub fn external_config_paths_for_worktree(&self, worktree_id: WorktreeId) -> Vec<Arc<Path>> {
+        self.worktree_state
+            .get(&worktree_id)
+            .map(|state| state.external_config_paths.iter().cloned().collect())
+            .unwrap_or_default()
+    }
+}

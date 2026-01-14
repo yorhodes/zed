@@ -523,7 +523,7 @@ pub enum ContentBlock {
     Empty,
     Markdown { markdown: Entity<Markdown> },
     ResourceLink { resource_link: acp::ResourceLink },
-    Image { image: Arc<gpui::Image> },
+    Image { image: Entity<gpui::Image> },
 }
 
 impl ContentBlock {
@@ -566,7 +566,9 @@ impl ContentBlock {
             }
             (ContentBlock::Empty, acp::ContentBlock::Image(image_content)) => {
                 if let Some(image) = Self::decode_image(image_content) {
-                    *self = ContentBlock::Image { image };
+                    *self = ContentBlock::Image {
+                        image: cx.new(|_| image),
+                    };
                 } else {
                     let new_content = Self::image_md(image_content);
                     *self = Self::create_markdown_block(new_content, language_registry, cx);
@@ -594,14 +596,14 @@ impl ContentBlock {
         }
     }
 
-    fn decode_image(image_content: &acp::ImageContent) -> Option<Arc<gpui::Image>> {
+    fn decode_image(image_content: &acp::ImageContent) -> Option<gpui::Image> {
         use base64::Engine as _;
 
         let bytes = base64::engine::general_purpose::STANDARD
             .decode(image_content.data.as_bytes())
             .ok()?;
         let format = gpui::ImageFormat::from_mime_type(&image_content.mime_type)?;
-        Some(Arc::new(gpui::Image::from_bytes(format, bytes)))
+        Some(gpui::Image::from_bytes(format, bytes))
     }
 
     fn create_markdown_block(
@@ -671,7 +673,7 @@ impl ContentBlock {
         }
     }
 
-    pub fn image(&self) -> Option<&Arc<gpui::Image>> {
+    pub fn image(&self) -> Option<&Entity<gpui::Image>> {
         match self {
             ContentBlock::Image { image } => Some(image),
             _ => None,
@@ -760,7 +762,7 @@ impl ToolCallContent {
         }
     }
 
-    pub fn image(&self) -> Option<&Arc<gpui::Image>> {
+    pub fn image(&self) -> Option<&Entity<gpui::Image>> {
         match self {
             Self::ContentBlock(content) => content.image(),
             _ => None,

@@ -3437,14 +3437,14 @@ impl AcpThreadView {
     fn render_image_output(
         &self,
         entry_ix: usize,
-        image: Arc<gpui::Image>,
+        image: Entity<gpui::Image>,
         location: Option<acp::ToolCallLocation>,
         card_layout: bool,
         show_dimensions: bool,
         cx: &Context<Self>,
     ) -> AnyElement {
         let dimensions_label = if show_dimensions {
-            let format_name = match image.format() {
+            let format_name = match image.read(cx).format() {
                 gpui::ImageFormat::Png => "PNG",
                 gpui::ImageFormat::Jpeg => "JPEG",
                 gpui::ImageFormat::Webp => "WebP",
@@ -3454,11 +3454,13 @@ impl AcpThreadView {
                 gpui::ImageFormat::Tiff => "TIFF",
                 gpui::ImageFormat::Ico => "ICO",
             };
-            let dimensions = image::ImageReader::new(std::io::Cursor::new(image.bytes()))
-                .with_guessed_format()
-                .ok()
-                .and_then(|reader| reader.into_dimensions().ok());
-            dimensions.map(|(w, h)| format!("{}×{} {}", w, h, format_name))
+            image.read_with(cx, |image, _| {
+                let dimensions = image::ImageReader::new(std::io::Cursor::new(image.bytes()))
+                    .with_guessed_format()
+                    .ok()
+                    .and_then(|reader| reader.into_dimensions().ok());
+                dimensions.map(|(w, h)| format!("{}×{} {}", w, h, format_name))
+            })
         } else {
             None
         };

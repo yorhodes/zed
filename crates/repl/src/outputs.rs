@@ -331,7 +331,7 @@ impl Output {
                     display_id,
                 }
             }
-            Some(MimeType::Png(data)) | Some(MimeType::Jpeg(data)) => match ImageView::from(data) {
+            Some(MimeType::Png(data)) | Some(MimeType::Jpeg(data)) => match ImageView::from(data, cx) {
                 Ok(view) => Output::Image {
                     content: cx.new(|_| view),
                     display_id,

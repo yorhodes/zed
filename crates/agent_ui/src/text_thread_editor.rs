@@ -1947,7 +1947,7 @@ impl TextThreadEditor {
                         continue;
                     };
                     let image_id = image.id();
-                    let image_task = LanguageModelImage::from_image(Arc::new(image), cx).shared();
+                    let image_task = LanguageModelImage::from_image(cx.new(|_| image), cx).shared();
 
                     for image_position in image_positions.iter() {
                         text_thread.insert_content(

@@ -7,7 +7,7 @@ use anyhow::Context as _;
 use editor::{EditorSettings, items::entry_git_aware_label_color};
 use file_icons::FileIcons;
 use gpui::{
-    AnyElement, App, Bounds, Context, Entity, EventEmitter, FocusHandle, Focusable,
+    AnyElement, App, Bounds, Context, Entity, EventEmitter, FocusHandle, Focusable, Image,
     InteractiveElement, IntoElement, ObjectFit, ParentElement, Render, Styled, Task, WeakEntity,
     Window, canvas, div, fill, img, opaque_grey, point, size,
 };
@@ -43,10 +43,11 @@ impl ImageView {
         cx.subscribe(&image_item, Self::on_image_event).detach();
         cx.on_release_in(window, |this, window, cx| {
             let image_data = this.image_item.read(cx).image.clone();
-            if let Some(image) = image_data.clone().get_render_image(window, cx) {
+            // TODO kb clean up only when Arc is dropped
+            if let Some(image) = Image::get_render_image(image_data.clone(), window, cx) {
                 cx.drop_image(image, None);
             }
-            image_data.remove_asset(cx);
+            Image::remove_asset(image_data, cx);
         })
         .detach();
 

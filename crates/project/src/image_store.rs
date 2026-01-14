@@ -102,7 +102,7 @@ impl ImageColorInfo {
 pub struct ImageItem {
     pub id: ImageId,
     pub file: Arc<worktree::File>,
-    pub image: Arc<gpui::Image>,
+    pub image: Entity<gpui::Image>,
     reload_task: Option<Task<()>>,
     pub image_metadata: Option<ImageMetadata>,
 }
@@ -188,7 +188,7 @@ impl ImageItem {
             if let Some(image) = content
                 .await
                 .context("Failed to load image content")
-                .and_then(create_gpui_image)
+                .and_then(|content| cx.update(|cx| create_gpui_image(content, cx)))
                 .log_err()
             {
                 this.update(cx, |this, cx| {
@@ -563,7 +563,7 @@ impl RemoteImageStore {
                     }
 
                     let image_metadata = ImageItem::compute_metadata_from_bytes(&content).log_err();
-                    let image = create_gpui_image(content)?;
+                    let image = create_gpui_image(content, cx)?;
 
                     let proto_file = loading.state.file.context("missing file in image state")?;
                     let worktree_id = WorktreeId::from_proto(proto_file.worktree_id);
@@ -620,7 +620,7 @@ impl ImageStoreImpl for Entity<LocalImageStore> {
         });
         cx.spawn(async move |image_store, cx| {
             let LoadedBinaryFile { file, content } = load_file.await?;
-            let image = create_gpui_image(content)?;
+            let image = cx.update(|cx| create_gpui_image(content, cx))?;
 
             let entity = cx.new(|cx| ImageItem {
                 id: cx.entity_id().as_non_zero_u64().into(),
@@ -887,10 +887,9 @@ impl LocalImageStore {
     }
 }
 
-fn create_gpui_image(content: Vec<u8>) -> anyhow::Result<Arc<gpui::Image>> {
+fn create_gpui_image(content: Vec<u8>, cx: &mut App) -> anyhow::Result<Entity<gpui::Image>> {
     let format = image::guess_format(&content)?;
-
-    Ok(Arc::new(gpui::Image::from_bytes(
+    let image = gpui::Image::from_bytes(
         match format {
             image::ImageFormat::Png => gpui::ImageFormat::Png,
             image::ImageFormat::Jpeg => gpui::ImageFormat::Jpeg,
@@ -902,7 +901,8 @@ fn create_gpui_image(content: Vec<u8>) -> anyhow::Result<Arc<gpui::Image>> {
             format => anyhow::bail!("Image format {format:?} not supported"),
         },
         content,
-    )))
+    );
+    Ok(cx.new(|_| image))
 }
 
 #[cfg(test)]

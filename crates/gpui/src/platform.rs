@@ -40,11 +40,12 @@ pub(crate) mod scap_screen_capture;
 
 use crate::{
     Action, AnyWindowHandle, App, AsyncWindowContext, BackgroundExecutor, Bounds,
-    DEFAULT_WINDOW_SIZE, DevicePixels, DispatchEventResult, Font, FontId, FontMetrics, FontRun,
-    ForegroundExecutor, GlyphId, GpuSpecs, ImageSource, Keymap, LineLayout, Pixels, PlatformInput,
-    Point, Priority, RenderGlyphParams, RenderImage, RenderImageParams, RenderSvgParams, Scene,
-    ShapedGlyph, ShapedRun, SharedString, Size, SvgRenderer, SystemWindowTab, Task, TaskTiming,
-    ThreadTaskTimings, Window, WindowControlArea, hash, point, px, size,
+    DEFAULT_WINDOW_SIZE, DevicePixels, DispatchEventResult, Entity, Font, FontId, FontMetrics,
+    FontRun, ForegroundExecutor, GlyphId, GpuSpecs, ImageSource, Keymap, LineLayout, Pixels,
+    PlatformInput, Point, Priority, RenderGlyphParams, RenderImage, RenderImageParams,
+    RenderSvgParams, Scene, ShapedGlyph, ShapedRun, SharedString, Size, SvgRenderer,
+    SystemWindowTab, Task, TaskTiming, ThreadTaskTimings, Window, WindowControlArea, hash, point,
+    px, size,
 };
 use anyhow::Result;
 use async_task::Runnable;
@@ -1849,29 +1850,29 @@ impl Image {
 
     /// Use the GPUI `use_asset` API to make this image renderable
     pub fn use_render_image(
-        self: Arc<Self>,
+        this: Entity<Self>,
         window: &mut Window,
         cx: &mut App,
     ) -> Option<Arc<RenderImage>> {
-        ImageSource::Image(self)
+        ImageSource::Image(this)
             .use_data(None, window, cx)
             .and_then(|result| result.ok())
     }
 
     /// Use the GPUI `get_asset` API to make this image renderable
     pub fn get_render_image(
-        self: Arc<Self>,
+        this: Entity<Self>,
         window: &mut Window,
         cx: &mut App,
     ) -> Option<Arc<RenderImage>> {
-        ImageSource::Image(self)
+        ImageSource::Image(this)
             .get_data(None, window, cx)
             .and_then(|result| result.ok())
     }
 
     /// Use the GPUI `remove_asset` API to drop this image, if possible.
-    pub fn remove_asset(self: Arc<Self>, cx: &mut App) {
-        ImageSource::Image(self).remove_asset(cx);
+    pub fn remove_asset(this: Entity<Self>, cx: &mut App) {
+        ImageSource::Image(this).remove_asset(cx);
     }
 
     /// Convert the clipboard image to an `ImageData` object.

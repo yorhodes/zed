@@ -5,8 +5,8 @@ use anyhow::Result;
 use base64::write::EncoderWriter;
 use cloud_llm_client::{CompletionIntent, CompletionMode};
 use gpui::{
-    App, AppContext as _, DevicePixels, Image, ImageFormat, ObjectFit, SharedString, Size, Task,
-    point, px, size,
+    App, DevicePixels, Entity, Image, ImageFormat, ObjectFit, SharedString, Size, Task, point, px,
+    size,
 };
 use image::GenericImageView as _;
 use image::codecs::png::PngEncoder;
@@ -99,25 +99,29 @@ impl LanguageModelImage {
         }
     }
 
-    pub fn from_image(data: Arc<Image>, cx: &mut App) -> Task<Option<Self>> {
-        cx.background_spawn(async move {
-            let image_bytes = Cursor::new(data.bytes());
-            let dynamic_image = match data.format() {
-                ImageFormat::Png => image::codecs::png::PngDecoder::new(image_bytes)
-                    .and_then(image::DynamicImage::from_decoder),
-                ImageFormat::Jpeg => image::codecs::jpeg::JpegDecoder::new(image_bytes)
-                    .and_then(image::DynamicImage::from_decoder),
-                ImageFormat::Webp => image::codecs::webp::WebPDecoder::new(image_bytes)
-                    .and_then(image::DynamicImage::from_decoder),
-                ImageFormat::Gif => image::codecs::gif::GifDecoder::new(image_bytes)
-                    .and_then(image::DynamicImage::from_decoder),
-                ImageFormat::Bmp => image::codecs::bmp::BmpDecoder::new(image_bytes)
-                    .and_then(image::DynamicImage::from_decoder),
-                ImageFormat::Tiff => image::codecs::tiff::TiffDecoder::new(image_bytes)
-                    .and_then(image::DynamicImage::from_decoder),
-                _ => return None,
-            }
-            .log_err()?;
+    pub fn from_image(data: Entity<Image>, cx: &mut App) -> Task<Option<Self>> {
+        cx.spawn(async move |cx| {
+            let dynamic_image = data
+                .read_with(cx, |data, _| {
+                    let image_bytes = Cursor::new(data.bytes());
+                    Some(match data.format() {
+                        ImageFormat::Png => image::codecs::png::PngDecoder::new(image_bytes)
+                            .and_then(image::DynamicImage::from_decoder),
+                        ImageFormat::Jpeg => image::codecs::jpeg::JpegDecoder::new(image_bytes)
+                            .and_then(image::DynamicImage::from_decoder),
+                        ImageFormat::Webp => image::codecs::webp::WebPDecoder::new(image_bytes)
+                            .and_then(image::DynamicImage::from_decoder),
+                        ImageFormat::Gif => image::codecs::gif::GifDecoder::new(image_bytes)
+                            .and_then(image::DynamicImage::from_decoder),
+                        ImageFormat::Bmp => image::codecs::bmp::BmpDecoder::new(image_bytes)
+                            .and_then(image::DynamicImage::from_decoder),
+                        ImageFormat::Tiff => image::codecs::tiff::TiffDecoder::new(image_bytes)
+                            .and_then(image::DynamicImage::from_decoder),
+                        _ => return None,
+                    })
+                })
+                .transpose()
+                .log_err()??;
 
             let width = dynamic_image.width();
             let height = dynamic_image.height();
@@ -461,7 +465,7 @@ pub struct LanguageModelResponseMessage {
 mod tests {
     use super::*;
     use base64::Engine as _;
-    use gpui::TestAppContext;
+    use gpui::{AppContext, TestAppContext};
     use image::ImageDecoder as _;
 
     fn base64_to_png_bytes(base64_png: &str) -> Vec<u8> {
@@ -506,8 +510,9 @@ mod tests {
         );
 
         let image = gpui::Image::from_bytes(ImageFormat::Png, original_png);
+        let image = cx.update(|cx| cx.new(|_| image));
         let lm_image = cx
-            .update(|cx| LanguageModelImage::from_image(Arc::new(image), cx))
+            .update(|cx| LanguageModelImage::from_image(image, cx))
             .await
             .expect("image conversion should succeed");
 

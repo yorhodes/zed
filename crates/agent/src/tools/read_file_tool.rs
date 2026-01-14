@@ -172,7 +172,7 @@ impl AgentTool for ReadFileTool {
                     .await?;
 
                 let image =
-                    image_entity.read_with(cx, |image_item, _| Arc::clone(&image_item.image));
+                    image_entity.read_with(cx, |image_item, _| image_item.image.clone());
 
                 let language_model_image = cx
                     .update(|cx| LanguageModelImage::from_image(image, cx))

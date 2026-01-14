@@ -43,7 +43,7 @@ pub enum ImageSource {
     /// Cached image data
     Render(Arc<RenderImage>),
     /// Cached image data
-    Image(Arc<Image>),
+    Image(Entity<Image>),
     /// A custom loading function to use
     Custom(Arc<dyn Fn(&mut Window, &mut App) -> Option<Result<Arc<RenderImage>, ImageCacheError>>>),
 }
@@ -108,8 +108,8 @@ impl From<Arc<RenderImage>> for ImageSource {
     }
 }
 
-impl From<Arc<Image>> for ImageSource {
-    fn from(value: Arc<Image>) -> Self {
+impl From<Entity<Image>> for ImageSource {
+    fn from(value: Entity<Image>) -> Self {
         Self::Image(value)
     }
 }
@@ -569,7 +569,7 @@ impl ImageSource {
 enum ImageDecoder {}
 
 impl Asset for ImageDecoder {
-    type Source = Arc<Image>;
+    type Source = Entity<Image>;
     type Output = Result<Arc<RenderImage>, ImageCacheError>;
 
     fn load(
@@ -577,7 +577,11 @@ impl Asset for ImageDecoder {
         cx: &mut App,
     ) -> impl Future<Output = Self::Output> + Send + 'static {
         let renderer = cx.svg_renderer();
-        async move { source.to_image_data(renderer).map_err(Into::into) }
+        cx.spawn(async move |cx| {
+            source.read_with(cx, |source, _| {
+                source.to_image_data(renderer).map_err(Into::into)
+            })
+        })
     }
 }
 

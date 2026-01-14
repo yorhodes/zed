@@ -3,7 +3,7 @@ use base64::{
     Engine as _, alphabet,
     engine::{DecodePaddingMode, GeneralPurpose, GeneralPurposeConfig},
 };
-use gpui::{App, ClipboardItem, Image, ImageFormat, RenderImage, Window, img};
+use gpui::{App, ClipboardItem, Entity, Image, ImageFormat, RenderImage, Window, img};
 use std::sync::Arc;
 use ui::{IntoElement, Styled, div, prelude::*};
 
@@ -11,7 +11,7 @@ use crate::outputs::OutputContent;
 
 /// ImageView renders an image inline in an editor, adapting to the line height to fit the image.
 pub struct ImageView {
-    clipboard_image: Arc<Image>,
+    clipboard_image: Entity<Image>,
     height: u32,
     width: u32,
     image: Arc<RenderImage>,
@@ -25,7 +25,7 @@ pub const STANDARD_INDIFFERENT: GeneralPurpose = GeneralPurpose::new(
 );
 
 impl ImageView {
-    pub fn from(base64_encoded_data: &str) -> Result<Self> {
+    pub fn from(base64_encoded_data: &str, cx: &mut App) -> Result<Self> {
         let filtered =
             base64_encoded_data.replace(&[' ', '\n', '\t', '\r', '\x0b', '\x0c'][..], "");
         let bytes = STANDARD_INDIFFERENT.decode(filtered)?;
@@ -58,7 +58,7 @@ impl ImageView {
         };
 
         // Convert back to a GPUI image for use with the clipboard
-        let clipboard_image = Arc::new(Image::from_bytes(format, bytes));
+        let clipboard_image = cx.new(|_| Image::from_bytes(format, bytes));
 
         Ok(ImageView {
             clipboard_image,
@@ -88,8 +88,8 @@ impl Render for ImageView {
 }
 
 impl OutputContent for ImageView {
-    fn clipboard_content(&self, _window: &Window, _cx: &App) -> Option<ClipboardItem> {
-        Some(ClipboardItem::new_image(self.clipboard_image.as_ref()))
+    fn clipboard_content(&self, _window: &Window, cx: &App) -> Option<ClipboardItem> {
+        Some(ClipboardItem::new_image(self.clipboard_image.read(cx)))
     }
 
     fn has_clipboard_content(&self, _window: &Window, _cx: &App) -> bool {

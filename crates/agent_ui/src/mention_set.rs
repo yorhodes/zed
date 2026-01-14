@@ -297,7 +297,7 @@ impl MentionSet {
             return cx.spawn(async move |_, cx| {
                 let image = task.await?;
                 let image = image.update(cx, |image, _| image.image.clone());
-                let format = image.format;
+                let format = image.read_with(cx, |image, _| image.format);
                 let image = cx
                     .update(|cx| LanguageModelImage::from_image(image, cx))
                     .await;
@@ -654,7 +654,7 @@ pub(crate) fn paste_images_as_context(
                 let snapshot = editor.buffer().read(cx).snapshot(cx);
                 snapshot.anchor_before(start_anchor.to_offset(&snapshot) + content_len)
             });
-            let image = Arc::new(image);
+            let image = cx.new(|_| image);
             let Ok(Some((crease_id, tx))) = cx.update(|window, cx| {
                 insert_crease_for_mention(
                     excerpt_id,
@@ -672,7 +672,7 @@ pub(crate) fn paste_images_as_context(
             };
             let task = cx
                 .spawn(async move |cx| {
-                    let format = image.format;
+                    let format = image.read_with(cx, |image, _| image.format);
                     let image = cx
                         .update(|_, cx| LanguageModelImage::from_image(image, cx))
                         .map_err(|e| e.to_string())?
@@ -712,7 +712,7 @@ pub(crate) fn insert_crease_for_mention(
     crease_label: SharedString,
     crease_icon: SharedString,
     // abs_path: Option<Arc<Path>>,
-    image: Option<Shared<Task<Result<Arc<Image>, String>>>>,
+    image: Option<Shared<Task<Result<Entity<Image>, String>>>>,
     editor: Entity<Editor>,
     window: &mut Window,
     cx: &mut App,
@@ -926,7 +926,7 @@ fn render_mention_fold_button(
     icon: SharedString,
     range: Range<Anchor>,
     mut loading_finished: postage::barrier::Receiver,
-    image_task: Option<Shared<Task<Result<Arc<Image>, String>>>>,
+    image_task: Option<Shared<Task<Result<Entity<Image>, String>>>>,
     editor: WeakEntity<Editor>,
     cx: &mut App,
 ) -> Arc<dyn Send + Sync + Fn(FoldId, Range<Anchor>, &mut App) -> AnyElement> {
@@ -959,7 +959,7 @@ struct LoadingContext {
     range: Range<Anchor>,
     editor: WeakEntity<Editor>,
     loading: Option<Task<()>>,
-    image: Option<Shared<Task<Result<Arc<Image>, String>>>>,
+    image: Option<Shared<Task<Result<Entity<Image>, String>>>>,
 }
 
 impl Render for LoadingContext {
@@ -998,7 +998,7 @@ impl Render for LoadingContext {
 }
 
 struct ImageHover {
-    image: Option<Arc<Image>>,
+    image: Option<Entity<Image>>,
     _task: Task<()>,
 }
 

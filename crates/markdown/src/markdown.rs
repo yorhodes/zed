@@ -104,7 +104,7 @@ pub struct Markdown {
     pressed_link: Option<RenderedLink>,
     autoscroll_request: Option<usize>,
     parsed_markdown: ParsedMarkdown,
-    images_by_source_offset: HashMap<usize, Arc<Image>>,
+    images_by_source_offset: HashMap<usize, Entity<Image>>,
     should_reparse: bool,
     pending_parse: Option<Task<()>>,
     focus_handle: FocusHandle,
@@ -338,13 +338,13 @@ impl Markdown {
         self.pending_parse = Some(self.start_background_parse(cx));
     }
 
-    fn start_background_parse(&self, cx: &Context<Self>) -> Task<()> {
+    fn start_background_parse(&self, cx: &mut Context<Self>) -> Task<()> {
         let source = self.source.clone();
         let should_parse_links_only = self.options.parse_links_only;
         let language_registry = self.language_registry.clone();
         let fallback = self.fallback_code_block_language.clone();
 
-        let parsed = cx.background_spawn(async move {
+        let parsed = cx.spawn(async move |_, cx| {
             if should_parse_links_only {
                 return (
                     ParsedMarkdown {
@@ -353,7 +353,7 @@ impl Markdown {
                         languages_by_name: TreeMap::default(),
                         languages_by_path: TreeMap::default(),
                     },
-                    Default::default(),
+                    HashMap::default(),
                 );
             }
 
@@ -404,7 +404,7 @@ impl Markdown {
                             .decode(data)
                             .log_with_level(Level::Debug)
                     {
-                        let image = Arc::new(Image::from_bytes(format, bytes));
+                        let image = cx.new(|_| Image::from_bytes(format, bytes));
                         images_by_source_offset.insert(range.start, image);
                     }
                 }

@@ -286,8 +286,8 @@ async fn test_external_editorconfig_support(cx: &mut gpui::TestAppContext) {
                 .languages()
                 .load_language_for_file_path(file.path.as_std_path());
             let file_language = cx
-                .background_executor()
-                .block(file_language)
+                .foreground_executor()
+                .block_on(file_language)
                 .expect("Failed to get file language");
             let file = file as _;
             language_settings(Some(file_language.name()), Some(&file), cx).into_owned()
@@ -343,8 +343,8 @@ async fn test_external_editorconfig_root_stops_traversal(cx: &mut gpui::TestAppC
             .languages()
             .load_language_for_file_path(file.path.as_std_path());
         let file_language = cx
-            .background_executor()
-            .block(file_language)
+            .foreground_executor()
+            .block_on(file_language)
             .expect("Failed to get file language");
         let file = file as _;
         let settings = language_settings(Some(file_language.name()), Some(&file), cx).into_owned();
@@ -391,8 +391,8 @@ async fn test_external_editorconfig_root_in_parent_stops_traversal(cx: &mut gpui
             .languages()
             .load_language_for_file_path(file.path.as_std_path());
         let file_language = cx
-            .background_executor()
-            .block(file_language)
+            .foreground_executor()
+            .block_on(file_language)
             .expect("Failed to get file language");
         let file = file as _;
         let settings = language_settings(Some(file_language.name()), Some(&file), cx).into_owned();
@@ -451,8 +451,8 @@ async fn test_external_editorconfig_shared_across_worktrees(cx: &mut gpui::TestA
                 .languages()
                 .load_language_for_file_path(file.path.as_std_path());
             let file_language = cx
-                .background_executor()
-                .block(file_language)
+                .foreground_executor()
+                .block_on(file_language)
                 .expect("Failed to get file language");
             let file = file as _;
             let settings =
@@ -500,8 +500,8 @@ async fn test_external_editorconfig_not_loaded_without_internal_config(
             .languages()
             .load_language_for_file_path(file.path.as_std_path());
         let file_language = cx
-            .background_executor()
-            .block(file_language)
+            .foreground_executor()
+            .block_on(file_language)
             .expect("Failed to get file language");
         let file = file as _;
         let settings = language_settings(Some(file_language.name()), Some(&file), cx).into_owned();
@@ -547,8 +547,8 @@ async fn test_external_editorconfig_modification_triggers_refresh(cx: &mut gpui:
             .languages()
             .load_language_for_file_path(file.path.as_std_path());
         let file_language = cx
-            .background_executor()
-            .block(file_language)
+            .foreground_executor()
+            .block_on(file_language)
             .expect("Failed to get file language");
         let file = file as _;
         let settings = language_settings(Some(file_language.name()), Some(&file), cx).into_owned();
@@ -575,8 +575,8 @@ async fn test_external_editorconfig_modification_triggers_refresh(cx: &mut gpui:
             .languages()
             .load_language_for_file_path(file.path.as_std_path());
         let file_language = cx
-            .background_executor()
-            .block(file_language)
+            .foreground_executor()
+            .block_on(file_language)
             .expect("Failed to get file language");
         let file = file as _;
         let settings = language_settings(Some(file_language.name()), Some(&file), cx).into_owned();
@@ -624,8 +624,8 @@ async fn test_adding_worktree_discovers_external_editorconfigs(cx: &mut gpui::Te
             .languages()
             .load_language_for_file_path(file.path.as_std_path());
         let file_language = cx
-            .background_executor()
-            .block(file_language)
+            .foreground_executor()
+            .block_on(file_language)
             .expect("Failed to get file language");
         let file = file as _;
         let settings = language_settings(Some(file_language.name()), Some(&file), cx).into_owned();
@@ -652,8 +652,8 @@ async fn test_adding_worktree_discovers_external_editorconfigs(cx: &mut gpui::Te
             .languages()
             .load_language_for_file_path(file.path.as_std_path());
         let file_language = cx
-            .background_executor()
-            .block(file_language)
+            .foreground_executor()
+            .block_on(file_language)
             .expect("Failed to get file language");
         let file = file as _;
         let settings = language_settings(Some(file_language.name()), Some(&file), cx).into_owned();
@@ -806,8 +806,8 @@ async fn test_shared_external_editorconfig_cleanup_with_multiple_worktrees(
             .languages()
             .load_language_for_file_path(file.path.as_std_path());
         let file_language = cx
-            .background_executor()
-            .block(file_language)
+            .foreground_executor()
+            .block_on(file_language)
             .expect("Failed to get file language");
         let file = file as _;
         let settings = language_settings(Some(file_language.name()), Some(&file), cx).into_owned();
